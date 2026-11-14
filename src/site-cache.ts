@@ -1,4 +1,5 @@
 import {createClient} from 'redis';
+import {RedisStartupError} from './startup-errors.js';
 import {createHash,randomUUID} from 'node:crypto';
 import type {GeneratedProduct} from './site-generator.js';
 import {InputError} from './domain.js';
@@ -19,12 +20,22 @@ export interface SiteCache {
  close():Promise<void>;
 }
 export async function connectSiteCache(url:string,ttlSeconds=86400,prefix='light-link:v1:sites:'):Promise<SiteCache> {
- if(!Number.isSafeInteger(ttlSeconds)||ttlSeconds<1||ttlSeconds>2592000)throw new Error('SITE_CACHE_TTL_SECONDS debe ser entero de 1 a 2592000');
+ if(!Number.isSafeInteger(ttlSeconds)||ttlSeconds<1||ttlSeconds>2592000)throw new RedisStartupError('REDIS_TTL_INVALID','SITE_CACHE_TTL_SECONDS debe ser entero de 1 a 2592000');
+ if(!url.startsWith('unix:')){
+  let parsed:URL;
+  try{parsed=new URL(url);}catch{throw new RedisStartupError('REDIS_URL_INVALID','REDIS_URL no es una URL válida. Usa la conexión TCP/TLS del proveedor.');}
+  if(!['redis:','rediss:'].includes(parsed.protocol))throw new RedisStartupError('REDIS_URL_PROTOCOL','REDIS_URL requiere redis:// o rediss://. La URL https:// de Upstash es REST y no es compatible con este cliente.');
+ }
  const socketOptions={connectTimeout:3000,reconnectStrategy:false as const};
  const client=createClient({...url.startsWith('unix:')?{socket:{...socketOptions,path:url.slice(5)}}:{url,socket:socketOptions},disableOfflineQueue:true});
  // Se responde 503 sin exponer credenciales ni datos de conexión.
  client.on('error',()=>{});
- await client.connect();
+ try{await client.connect();}catch(error){
+  if(client.isOpen)client.destroy();
+  const message=error instanceof Error?error.message:'';
+  if(/WRONGPASS|NOAUTH|invalid username-password/i.test(message))throw new RedisStartupError('REDIS_AUTH_FAILED','Redis rechazó la autenticación. Revisa usuario y contraseña en REDIS_URL.');
+  throw new RedisStartupError('REDIS_CONNECTION_FAILED','No se pudo conectar a Redis. Revisa host, puerto, TLS, acceso de red y disponibilidad del proveedor.');
+ }
  async function run<T>(operation:()=>Promise<T>):Promise<T>{
   try{return await operation();}catch{throw new InputError('Redis no disponible; no se pudo leer o guardar el sitio',503);}
  }

@@ -178,3 +178,27 @@ imagen. La reconstrucción regional comparada con la entrega original tuvo
 **0 m de diferencia máxima** en todos sus píxeles, con el mismo CRS y transform.
 Las nueve pruebas Python incluyen rechazos por checksum incorrecto y tamaño
 excesivo en las descargas.
+
+## El build pasa pero la aplicación termina con código 1
+
+El resumen «La aplicación salió con el código 1» no identifica la excepción.
+Abrir el evento de Runtime Logs y consultar stdout/stderr. El servidor emite
+un objeto `startup_failed` con un código y mensaje sin URL ni credenciales:
+
+- `REDIS_URL_PROTOCOL`: se usó HTTP/HTTPS; el cliente necesita `redis://` o
+  `rediss://`. La URL HTTPS de Upstash corresponde a REST.
+- `REDIS_URL_INVALID`: URL mal formada.
+- `REDIS_AUTH_FAILED`: usuario o contraseña rechazados.
+- `REDIS_CONNECTION_FAILED`: host/puerto/TLS/red no disponibles.
+- `REDIS_TTL_INVALID`: TTL no válido.
+- `EADDRINUSE`, `EACCES`, `ERR_SOCKET_BAD_PORT`: revisar el puerto del servidor.
+
+Redis se conecta antes de abrir HTTP: una configuración inválida puede impedir
+que respondan incluso las rutas de salud. Corregir las variables en el entorno
+correspondiente (Preview o Production) y volver a desplegar. No publicar las
+credenciales en los logs ni en el chat.
+
+Para comprobar la API usar `/health` y `/sites`. `/sitio` no es una ruta del
+contrato y `/` no tiene una página web; normalmente devuelven 404, no deben
+terminar el proceso. Una caída al solicitar esas rutas apunta al arranque,
+no confirma por sí misma un problema de enrutamiento.
