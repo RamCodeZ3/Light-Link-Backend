@@ -3,7 +3,8 @@
 Preparación para **Vercel Container Runtime (beta)**. Conserva en un solo
 contenedor Fastify/Node.js 22, Python 3.12, LOLA y el análisis automático.
 Redis debe ser una instancia externa accesible por TCP/TLS.
-No se ha creado un proyecto ni publicado un deployment en la cuenta del usuario.
+Esta preparación no publica cambios en tu cuenta; Preview y Production se
+validan al desplegar.
 
 ## 1. Preparar los datos en esta computadora
 
@@ -170,3 +171,10 @@ El ejemplo de cuatro muestras devolvió `200`: primera generación ~12,3 s,
 consulta en caché ~0,011 s. Son mediciones locales, no garantías de Vercel.
 Compilación TypeScript y las seis pruebas de API/Redis aprobadas. Imagen local
 aproximadamente 735 MiB; fuentes seleccionadas aproximadamente 95 MiB.
+
+También se probó una construcción sin `.deployment/science`, equivalente a un
+checkout de Git: descargó las fuentes NASA, verificó sus hashes y terminó la
+imagen. La reconstrucción regional comparada con la entrega original tuvo
+**0 m de diferencia máxima** en todos sus píxeles, con el mismo CRS y transform.
+Las nueve pruebas Python incluyen rechazos por checksum incorrecto y tamaño
+excesivo en las descargas.
