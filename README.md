@@ -55,7 +55,8 @@ curl -X POST http://127.0.0.1:3000/analyses -H 'Content-Type: application/json' 
 Parámetros opcionales: `observer_height_m` (2 por defecto; 2 o 5),
 `start_utc`, `end_utc` (UTC exacto `YYYY-MM-DDTHH:mm:ssZ`, alineados a muestras),
 `step_hours` (entero 1–24, por defecto 1). Inicio anterior al fin; rango máximo
-limitado a los datos disponibles. No se aceptan coordenadas arbitrarias ni
+limitado a los datos disponibles. Los análisis requieren un sitio con datos precalculados; las coordenadas nuevas
+se registran mediante `POST /sites` (ver sección Redis). No se aceptan
 parámetros desconocidos. No se guardan trabajos.
 Errores JSON `{ "error": "..." }`: 400 entrada inválida, 404 sitio/recurso
 inexistente, 422 sin cobertura; 500 error interno sin revelar rutas.
@@ -107,3 +108,78 @@ salida principal en `src/schema.ts`; entradas validadas por Fastify.
 Las pruebas cubren interpolación circular, igualdad, ventanas cortas y
 truncadas, oclusión, ambos perfiles de los siete sitios, rutas, errores,
 exportación y descarga PNG. No añaden frontend ni infraestructura de persistencia.
+
+## Registro de nuevos sitios y Redis
+
+Ampliación solicitada por el equipo: se pueden registrar sitios por coordenadas.
+Configura un Redis existente mediante `REDIS_URL` antes de iniciar la API:
+
+```bash
+REDIS_URL=redis://127.0.0.1:6379 SITE_CACHE_TTL_SECONDS=86400 npm start
+```
+
+Para desarrollo, si tienes Docker disponible:
+
+```bash
+docker run --rm --name light-link-redis -p 127.0.0.1:6379:6379 redis:7.4
+```
+
+`SITE_CACHE_TTL_SECONDS`: entero entre 1 y 2592000 segundos; por defecto 86400
+(24 h). Es caché: los sitios personalizados desaparecen al expirar o si Redis
+pierde sus datos. Sobreviven al reinicio de la API mientras permanezcan en Redis.
+Los archivos de los sitios precalculados siguen siendo su fuente de datos.
+No hay respaldo persistente de los registros nuevos.
+
+```bash
+curl -X POST http://127.0.0.1:3000/sites \
+  -H 'Content-Type: application/json' \
+  -d '{"name":"Punto de exploración","coordinates":{"latitude":-89.5,"longitude":-137.5}}'
+```
+
+El ejemplo es ilustrativo; no define un sitio científicamente validado.
+Respuesta `201` al crear, `200` si ya existe el mismo registro en caché:
+
+```json
+{
+  "site_id": "custom_<identificador derivado de coordenadas>",
+  "name": "Punto de exploración",
+  "coordinates": {"latitude": -89.5, "longitude": 222.5},
+  "status": "pending_data",
+  "created_at_utc": "...",
+  "expires_at_utc": "...",
+  "missing_data": ["horizon_mask", "ephemeris_timeline", "heightmap_and_metadata"]
+}
+```
+
+Latitud admitida: [-90°, 90°]; longitud de entrada: [-180°, 360°], positiva al
+este, normalizada a [0°, 360°). Nombre obligatorio de hasta 120 caracteres.
+Se asigna un ID determinista; no se sobrescriben los sitios originales ni se
+modifica el nombre o TTL del primer registro al repetir las coordenadas.
+
+- `GET /sites`: agrega los registros nuevos a los sitios precalculados.
+- `GET /sites/:site_id/metadata`: devuelve estado y coordenadas. Los originales
+  tienen estado `ready`, los nuevos `pending_data`.
+- `GET /sites/:site_id`, `POST /analyses` y exportación: responden `422` para un
+  sitio pendiente; `404` cuando es desconocido o su caché ya expiró.
+- Sin `REDIS_URL`, el registro devuelve `503`; los siete sitios originales
+  siguen disponibles. Con Redis configurado, la API comprueba la conexión al
+  iniciar. Si Redis cae después, las operaciones que dependen de él devuelven
+  `503`; el análisis de sitios precalculados sigue disponible.
+
+**Implementado:** registro, consulta, deduplicación y TTL en Redis.
+**Pendiente de acordar con el equipo:** entrega o generación de datos científicos
+para los sitios nuevos y su incorporación al análisis. Registrar coordenadas no
+produce una máscara de horizonte ni efemérides, ni reutiliza las de otro sitio.
+No se ejecuta automáticamente NASA/JPL ni el procesamiento LOLA en esta ruta.
+
+Prueba de integración con Redis real, aislada y sin modificar una instancia existente:
+
+```bash
+TEST_REDIS_SERVER_PATH=/ruta/a/redis-server npm test
+```
+
+Sin esa variable, se ejecutan las pruebas normales y se omite explícitamente
+solo la integración Redis. El test inicia un proceso temporal sin persistencia,
+verifica registro concurrente, lectura tras reiniciar la API, TTL, expiración y
+fallo de Redis; al terminar elimina sus propios archivos temporales.
+Cliente utilizado: [node-redis, documentación oficial](https://redis.io/docs/latest/develop/clients/nodejs/).
