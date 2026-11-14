@@ -311,7 +311,9 @@ los resultados no se versionan ni se sustituyen silenciosamente por mocks.
 
 Configurado para Vercel Container Runtime (beta), manteniendo Node.js y Python
 juntos. La [guía de despliegue](deployment/README.md) explica Redis externo,
-variables, preparación de DEM y subida con Vercel CLI.
+variables y despliegue mediante Git o Vercel CLI. Desde Git, la construcción
+obtiene los DEM desde NASA y verifica sus hashes automáticamente; con CLI
+puede reutilizar el paquete local ya preparado.
 
 `npm run deploy:prepare` prepara una variante para Hobby con los DEM de las tres
 regiones del MVP (Site01, Site04 y Site11), comprimidos sin pérdida. Los siete

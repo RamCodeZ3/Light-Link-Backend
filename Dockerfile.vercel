@@ -9,29 +9,36 @@ COPY scripts ./scripts
 COPY tests ./tests
 RUN npm run build && npm prune --omit=dev --ignore-scripts
 
-FROM python:3.12-slim-bookworm AS runtime
+FROM python:3.12-slim-bookworm AS python-base
 WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends libexpat1 libstdc++6 ca-certificates && rm -rf /var/lib/apt/lists/*
+ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1 OPENBLAS_NUM_THREADS=1
+COPY python/requirements.txt ./python/requirements.txt
+RUN pip install --root-user-action=ignore --no-cache-dir --only-binary=:all: -r python/requirements.txt
+RUN python -c "import numpy, rasterio, scipy, pyproj; from PIL import Image"
+
+# Desde Git existe .gitkeep; desde CLI puede venir el paquete preparado.
+# Esta etapa no depende del código TypeScript: permite reutilizar su caché.
+FROM python-base AS science-build
+COPY data/sites ./data/sites
+COPY deployment/prepare_science.py deployment/ensure_science.py ./deployment/
+COPY .deployment ./staged
+RUN python deployment/ensure_science.py --seed /app/staged/science --output /app/science
+
+FROM python-base AS runtime
 ENV NODE_ENV=production \
     HOST=0.0.0.0 \
     PORT=80 \
     PYTHON_BIN=/usr/local/bin/python \
-    PYTHONDONTWRITEBYTECODE=1 \
-    PYTHONUNBUFFERED=1 \
-    OPENBLAS_NUM_THREADS=1 \
     LOLA_DEM_DIR=/app/science/local \
     LOLA_REGIONAL_DEM=/app/science/regional/ldem_64_sur_stereo_200m.tif
 COPY --from=node-build /usr/local/bin/node /usr/local/bin/node
 COPY --from=node-build /app/node_modules ./node_modules
 COPY --from=node-build /app/dist/src ./dist/src
+COPY --from=science-build /app/science ./science
 COPY package.json ./
 COPY python ./python
-RUN pip install --no-cache-dir --only-binary=:all: -r python/requirements.txt
-RUN python -c "import numpy, rasterio, scipy, pyproj; from PIL import Image"
 COPY data/sites ./data/sites
 COPY public/heightmaps ./public/heightmaps
-COPY deployment/prepare_science.py ./deployment/prepare_science.py
-COPY .deployment/science ./science
-RUN python deployment/prepare_science.py --verify --output /app/science
 EXPOSE 80
 CMD ["node", "dist/src/server.js"]

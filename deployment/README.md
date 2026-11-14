@@ -22,7 +22,10 @@ expresamente en la subida de Vercel CLI. Verifica los hashes originales y
 comprime los TIFF sin pérdida: comprueba igualdad de todos los píxeles y
 conserva CRS, transformaciones, dimensiones, NoData y tipo de datos. El
 manifiesto registra tanto el hash del original como el del archivo comprimido.
-No cambia los datos originales ni recalcula el DEM regional.
+La preparación local no cambia los datos originales ni recalcula el DEM regional.
+Si el paquete local no existe al construir desde Git, se descargan los tres
+GeoTIFF originales y el DEM global de NASA, verificando sus SHA-256; se
+reconstruye entonces el DEM regional con el mismo remuestreo de la entrega.
 
 La variante predeterminada incluye los DEM de **Site01, Site04 y Site11**,
 además del DEM regional: aproximadamente 84,5 MiB de ciencia y unos 95 MiB con
@@ -89,12 +92,24 @@ npm run deploy:verify
 npx vercel@latest deploy
 ```
 
-La configuración actual está preparada para **CLI desde la computadora con los
-datos**, no para importar únicamente el repositorio Git: `.deployment/science`
-no se versiona y no estará en un checkout remoto. Un push por sí solo no produce
-el backend completo. Para automatizar desde Git hará falta que CI obtenga el
-paquete de DEM de un almacenamiento accesible antes de construir la imagen;
-no se inventó ni configuró una URL de almacenamiento.
+También se puede desplegar desde **Git**. El repositorio conserva únicamente
+`.deployment/.gitkeep`; la etapa `science-build` detecta que no hay paquete
+local, descarga los tres DEM del MVP desde NASA/GSFC y el DEM global
+`ldem_64.tif` del CGI Moon Kit, y verifica sus hashes contra los registrados.
+Después reconstruye el DEM regional de 200 m con el mismo remuestreo de la
+entrega y comprime el paquete sin pérdida. No hace falta subir los DEM a Git
+ni preparar archivos en el servidor de Vercel manualmente.
+
+El primer build desde Git descarga aproximadamente **1,2 GB** y depende de la
+disponibilidad de NASA. Tiene timeout por conexión, hasta tres intentos por
+archivo y comprobación SHA-256 obligatoria. Si la fuente falla o cambia, el
+build falla con un error explícito; no se generan datos ficticios. Los cambios
+del código TypeScript no invalidan por sí solos la etapa científica, aunque
+Vercel puede descartar su caché. Los originales descargados se eliminan antes
+de terminar esa etapa; la imagen final solo incorpora el paquete preparado.
+
+Si se usa CLI y hay un paquete local válido, se reutiliza sin descargar ni
+regenerar la ciencia. Los dos modos conservan el backend Python completo.
 
 No usar `--prod` hasta verificar el preview. El comando de producción, cuando
 se decida publicar, es `npx vercel@latest deploy --prod`.

@@ -18,7 +18,9 @@
 !public/heightmaps/*.png
 !deployment/
 !deployment/prepare_science.py
+!deployment/ensure_science.py
 !.deployment/
+!.deployment/.gitkeep
 !.deployment/science/
 !.deployment/science/**
 **/__pycache__/
