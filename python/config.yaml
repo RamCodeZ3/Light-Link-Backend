@@ -1,0 +1,98 @@
+# =============================================================================
+# Lunar Co-Visibility Explorer - NASA Space Apps 2026
+# Configuracion unica de la Fase 1 (datos).
+#
+#   python ejecutar_fase1.py --config config.yaml      # regenera T1 -> T2 -> T3
+#
+# Rutas: entrada datos/crudos/lola_sitios_5m, salida datos/fase1 (ver
+# fase1/comun.py).  Las rutas relativas de este archivo son relativas a la
+# raiz del proyecto.
+#
+# Todos los scripts aceptan `--config config.yaml` y usan estos valores.
+# =============================================================================
+schema_version: 2
+
+# -----------------------------------------------------------------------------
+# T1 - LOLA DEM -> PNG 16 bits
+# -----------------------------------------------------------------------------
+t1:
+  input_glob: "*_final_adj_5mpp_surf.tif"
+  pixel_resolution_m: 5.0
+
+  # Lado maximo del tile. El tile real se recorta al area con datos validos,
+  # de modo que valid_pixel_fraction == 1.0 (no hay relleno artificial).
+  max_crop_m: 20000.0
+
+  # Recurso web: PNG 16 bits, remuestreado con INTER_AREA.
+  web_px: 1024
+  max_web_bytes: 1500000
+
+  # El PNG nativo (4000/3200 px) no es recurso web: es el dato de referencia.
+  write_native_png: true
+
+  center: "valid"          # "valid" | "raster"
+
+# -----------------------------------------------------------------------------
+# T2 - Mascaras de horizonte H(phi)
+# -----------------------------------------------------------------------------
+t2:
+  # LUT en AZIMUT REAL (0=N, 90=E). Ver fase1/t2_mascaras_horizonte.py.
+  azimuth_step_deg: 0.1            # 3600 bins
+  distance_step_m: 5.0             # paso de marcha en el tramo lejano
+  distance_refine_m: 500.0         # tramo fino hasta esta distancia
+  distance_refine_step_m: 1.0      # paso del tramo fino (el horizonte lo
+                                    # fija el relieve a <500 m)
+  observer_heights_m: [2.0, 5.0]
+
+  # Seleccion automatica del sitio objetivo: minimo de pendiente local dentro
+  # de un radio dado alrededor del centro de la huella valida.
+  target_search_radius_m: 200.0
+  target_slope_window_m: 20.0
+  target_slope_ok_deg: 10.0
+
+  # Capa lejana: DEM regional ( decenas de m/px ) con cobertura >= 150-200 km.
+  #   provider "mosaic"      -> mosaico virtual de los DEM de los sitios (datos
+  #                             locales, cobertura discontinua; se registra el
+  #                             alcance real alcanzado)
+  #   provider "regional_dem" -> el GeoTIFF regional indicado abajo
+  #   provider "none"       -> solo la capa cercana
+  #
+  # DEM regional: LOLA global del CGI Moon Kit (NASA/GSFC/SVS 4720, ldem_64,
+  # 64 px/grado) reproyectado a esta estereografica polar con paso de 200 m:
+  #   python fase1/dem_regional.py --verify
+  # (validado contra los tiles de 5 m: sesgo -0,6 m, RMSE 10,5 m a 500 m).
+  far_field:
+    enabled: true
+    provider: "regional_dem"
+    regional_dem: "datos/intermedios/dem_regional/ldem_64_sur_stereo_200m.tif"
+    max_distance_m: 150000.0
+    downsample_m: 100.0           # paso de muestreo del DEM de la capa lejana
+    convergence_delta_deg: 0.05   # criterio de convergencia de max|H|
+    convergence_factors: [1.0, 2.0, 4.0]
+
+# -----------------------------------------------------------------------------
+# T3 - Efemerides JPL Horizons
+# -----------------------------------------------------------------------------
+t3:
+  # AVISO: estas fechas son la ventana de trabajo (2 lunaciones) para validar
+  # el pipeline; NO son las fechas oficiales de la hackathon.  El equipo debe
+  # confirmarlas y cambiarlas aqui: todo lo demas (num_steps, ventanas,
+  # porcentajes) se deriva de estos tres valores.
+  start_time: "2026-11-01 00:00"
+  stop_time: "2026-12-31 23:00"
+  step: "1h"
+
+  observer_height_m: 2.0           # altura sobre el suelo del observador
+
+  # Criterios de visibilidad.
+  sun_fraction_min: 0.5           # fraccion minima de disco solar para "iluminado"
+  earth_margin_deg: 0.0           # margen angular minimo para linea de vista
+
+  # Configuracion de Horizons.
+  horizons_api: "https://ssd.jpl.nasa.gov/api/horizons.api"
+  rate_limit_s: 0.5
+  max_tries: 5
+  use_astroquery_fallback: false  # sin verificar: se deja desactivado
+
+  output_subdir: "ephemeris"      # un archivo por objetivo
+  write_index: true
