@@ -306,3 +306,15 @@ reutilización tras reiniciar la API, cambio de altura, exportación y expiraci�
 comprueba alturas de 2 y 5 m, descarga PNG, reutiliza caché y rechaza un punto
 sin cobertura. Su evidencia se escribe en `/tmp/light-link-automatic-smoke.json`;
 los resultados no se versionan ni se sustituyen silenciosamente por mocks.
+
+## Despliegue en Vercel
+
+Configurado para Vercel Container Runtime (beta), manteniendo Node.js y Python
+juntos. La [guía de despliegue](deployment/README.md) explica Redis externo,
+variables, preparación de DEM y subida con Vercel CLI.
+
+`npm run deploy:prepare` prepara una variante para Hobby con los DEM de las tres
+regiones del MVP (Site01, Site04 y Site11), comprimidos sin pérdida. Los siete
+sitios precalculados siguen disponibles; la cobertura automática nueva queda
+limitada a esas tres huellas. `npm run deploy:prepare:full` conserva los siete
+DEM y requiere capacidad de subida mayor. Los paquetes no se guardan en Git.
