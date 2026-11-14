@@ -1,15 +1,21 @@
 import {createClient} from 'redis';
-import {createHash} from 'node:crypto';
+import {createHash,randomUUID} from 'node:crypto';
+import type {GeneratedProduct} from './site-generator.js';
 import {InputError} from './domain.js';
 export interface NewSite {name:string;coordinates:{latitude:number;longitude:number}}
 export interface CachedSite extends NewSite {
- site_id:string;status:'pending_data';created_at_utc:string;expires_at_utc:string;
+ site_id:string;status:'pending_data'|'ready';created_at_utc:string;expires_at_utc:string;
  missing_data:string[];
+ coverage?:{start_utc:string;end_utc:string;observer_height_m:number};
 }
 export interface SiteCache {
  register(input:NewSite):Promise<{created:boolean;site:CachedSite}>;
  get(id:string):Promise<CachedSite|null>;
  list():Promise<CachedSite[]>;
+ getProduct(id:string):Promise<GeneratedProduct|null>;
+ acquireGeneration(id:string):Promise<string|null>;
+ publishProduct(id:string,token:string,product:GeneratedProduct):Promise<void>;
+ releaseGeneration(id:string,token:string):Promise<void>;
  close():Promise<void>;
 }
 export async function connectSiteCache(url:string,ttlSeconds=86400,prefix='light-link:v1:sites:'):Promise<SiteCache> {
@@ -44,13 +50,31 @@ export async function connectSiteCache(url:string,ttlSeconds=86400,prefix='light
   },get,
   async list(){return run(async()=>{
    const sites=new Map<string,CachedSite>();
-   for await(const keys of client.scanIterator({MATCH:prefix+'*',COUNT:100})){
+   for await(const keys of client.scanIterator({MATCH:prefix+'custom_*',COUNT:100})){
     if(!keys.length)continue;
     const values=await client.mGet(keys);
     for(const value of values)if(value){const site=JSON.parse(value) as CachedSite;sites.set(site.site_id,site);}
    }
    return [...sites.values()].sort((a,b)=>a.site_id.localeCompare(b.site_id));
   });},
+  async getProduct(id){return run(async()=>{
+   if(!await client.exists(prefix+id))return null;
+   const value=await client.get(prefix+'product:'+id);
+   return value?JSON.parse(value) as GeneratedProduct:null;
+  });},
+  async acquireGeneration(id){return run(async()=>{
+   const token=randomUUID();
+   const saved=await client.set(prefix+'lock:'+id,token,{NX:true,EX:300});
+   return saved?token:null;
+  });},
+  async publishProduct(id,token,product){
+   const site=await get(id);
+   if(!site)throw new InputError('El registro del sitio expiró durante el cálculo; vuelve a registrarlo',404);
+   const updated:CachedSite={...site,status:'ready',missing_data:[],expires_at_utc:new Date(Date.now()+ttlSeconds*1000).toISOString(),coverage:{start_utc:product.site.ephemeris_timeline[0].timestamp_utc,end_utc:product.site.ephemeris_timeline.at(-1)!.timestamp_utc,observer_height_m:Number(product.site.target.observer_height_m)}};
+   const saved=await run(()=>client.eval("if redis.call('GET', KEYS[1]) ~= ARGV[1] or redis.call('EXISTS', KEYS[2]) == 0 then return 0 end redis.call('SET', KEYS[2], ARGV[2], 'EX', ARGV[4]) redis.call('SET', KEYS[3], ARGV[3], 'EX', ARGV[4]) return 1",{keys:[prefix+'lock:'+id,prefix+id,prefix+'product:'+id],arguments:[token,JSON.stringify(updated),JSON.stringify(product),String(ttlSeconds)]}));
+   if(saved!==1)throw new InputError('El registro o bloqueo expiró durante el cálculo; reintenta',409);
+  },
+  async releaseGeneration(id,token){await run(()=>client.eval("if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end",{keys:[prefix+'lock:'+id],arguments:[token]}));},
   async close(){if(client.isOpen)await client.close();}
  };
 }

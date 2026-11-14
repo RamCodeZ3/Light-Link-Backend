@@ -1,4 +1,5 @@
 import Fastify from 'fastify';
+import {automaticAnalyses,type SiteGenerator} from './site-generator.js';
 import {masterSchema} from './schema.js';
 import {readFile} from 'node:fs/promises';
 import {resolve,basename} from 'node:path';
@@ -6,21 +7,22 @@ import {analyse,type Options,InputError} from './domain.js';
 import {loadSites} from './repository.js';
 import {connectSiteCache,type SiteCache,type NewSite} from './site-cache.js';
 const optionProperties={observer_height_m:{type:'number',enum:[2,5]},start_utc:{type:'string',format:'date-time'},end_utc:{type:'string',format:'date-time'},step_hours:{type:'integer',minimum:1,maximum:24}};
-export async function buildApp(config:{siteCache?:SiteCache;redisUrl?:string;siteCacheTtlSeconds?:number}={}) {
+export async function buildApp(config:{siteCache?:SiteCache;redisUrl?:string;siteCacheTtlSeconds?:number;siteGenerator?:SiteGenerator}={}) {
   const app=Fastify({logger:false,bodyLimit:16384,ajv:{customOptions:{removeAdditional:false}}});
   const repo=await loadSites();
   const redisUrl=config.redisUrl ?? process.env.REDIS_URL;
   const siteCache=config.siteCache ?? (redisUrl?await connectSiteCache(redisUrl,config.siteCacheTtlSeconds ?? Number(process.env.SITE_CACHE_TTL_SECONDS ?? 86400)):undefined);
   if(siteCache)app.addHook('onClose',async()=>{await siteCache.close();});
+  const ensure=siteCache?automaticAnalyses(siteCache,config.siteGenerator):undefined;
   function requireCache(){if(!siteCache)throw new InputError('Registro de sitios requiere configurar REDIS_URL',503);return siteCache;}
-  async function getAnalysableSite(id:string){
+  async function getAnalysableSite(id:string,options:Options={}){
     const predefined=repo.list().find(s=>s.site_id===id);
     if(predefined)return predefined;
     const pending=siteCache?await siteCache.get(id):null;
-    if(pending)throw new InputError('Sitio registrado, pendiente de máscara de horizonte, efemérides y heightmap específicos para esas coordenadas',422);
+    if(pending)return (await ensure!(pending,options)).site;
     throw new InputError('Sitio desconocido o expirado',404);
   }
-  const params={type:'object',required:['site_id'],properties:{site_id:{type:'string',maxLength:64}},additionalProperties:false};
+  const params={type:'object',required:['site_id'],properties:{site_id:{type:'string',maxLength:64,pattern:'^[A-Za-z0-9_-]+$'}},additionalProperties:false};
   const query={type:'object',properties:optionProperties,additionalProperties:false};
   app.setErrorHandler((error,request,reply)=>{
     const status=error instanceof InputError?error.statusCode:(error as {validation?:unknown}).validation?400:500;
@@ -40,12 +42,17 @@ export async function buildApp(config:{siteCache?:SiteCache;redisUrl?:string;sit
     if(!site)throw new InputError('Sitio desconocido o expirado',404);
     return site;
   });
-  app.get<{Params:{site_id:string};Querystring:Options}>('/sites/:site_id',{schema:{params,querystring:query,response:{200:masterSchema}}},async r=>analyse(await getAnalysableSite(r.params.site_id),r.query));
-  app.post<{Body:Options & {site_id:string}}>('/analyses',{schema:{response:{200:masterSchema},body:{type:'object',required:['site_id'],properties:{site_id:{type:'string',maxLength:64},...optionProperties},additionalProperties:false}}},async r=>analyse(await getAnalysableSite(r.body.site_id),r.body));
+  app.get<{Params:{site_id:string};Querystring:Options}>('/sites/:site_id',{schema:{params,querystring:query,response:{200:masterSchema}}},async r=>analyse(await getAnalysableSite(r.params.site_id,r.query),r.query));
+  app.post<{Body:Options & {site_id:string}}>('/analyses',{schema:{response:{200:masterSchema},body:{type:'object',required:['site_id'],properties:{site_id:{type:'string',maxLength:64,pattern:'^[A-Za-z0-9_-]+$'},...optionProperties},additionalProperties:false}}},async r=>analyse(await getAnalysableSite(r.body.site_id,r.body),r.body));
   app.get<{Params:{site_id:string};Querystring:Options & {format?:string}}>('/sites/:site_id/export',{schema:{params,querystring:{...query,properties:{...optionProperties,format:{type:'string',enum:['json','csv']}}}}},async(r,reply)=>{
-    const result=analyse(await getAnalysableSite(r.params.site_id),r.query);
+    const result=analyse(await getAnalysableSite(r.params.site_id,r.query),r.query);
     if(r.query.format==='csv')return reply.type('text/csv; charset=utf-8').header('content-disposition',`attachment; filename="${result.site_id}-windows.csv"`).send(['condition,start_utc,end_utc,duration_hours,truncated_start,truncated_end',...result.windows.map(w=>[w.condition,w.start_utc,w.end_utc,w.duration_hours,w.truncated_start,w.truncated_end].join(','))].join('\r\n')+'\r\n');
     return result;
+  });
+  app.get<{Params:{site_id:string}}>('/sites/:site_id/heightmap',{schema:{params}},async(r,reply)=>{
+    const product=siteCache?await siteCache.getProduct(r.params.site_id):null;
+    if(!product)throw new InputError('Heightmap no disponible o expirado; solicita el análisis primero',404);
+    return reply.type('image/png').header('cache-control','no-store').send(Buffer.from(product.heightmap_base64,'base64'));
   });
   const allowed=new Set(repo.list().map(s=>basename(s.heightmap_url)));
   app.get<{Params:{file:string}}>('/assets/heightmaps/:file',async(r,reply)=>{
