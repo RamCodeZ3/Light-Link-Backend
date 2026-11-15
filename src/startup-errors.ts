@@ -2,8 +2,11 @@
 export class RedisStartupError extends Error {
  constructor(public code:string,message:string){super(message);this.name='RedisStartupError';}
 }
+export class DatabaseStartupError extends Error {
+ constructor(public code:string,message:string){super(message);this.name='DatabaseStartupError';}
+}
 export function startupReport(error:unknown) {
- if(error instanceof RedisStartupError)return {event:'startup_failed',code:error.code,message:error.message};
+ if(error instanceof RedisStartupError||error instanceof DatabaseStartupError)return {event:'startup_failed',code:error.code,message:error.message};
  const code=(error as {code?:unknown})?.code;
  const messages:Record<string,string>={
   EADDRINUSE:'El puerto configurado ya está ocupado.',
