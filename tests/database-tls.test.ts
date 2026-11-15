@@ -8,8 +8,12 @@ import {startupReport} from '../src/startup-errors.js';
 import {temporaryPostgres} from './helpers/postgres.js';
 test('TLS: configuración incompleta o inválida falla sin revelar claves',()=>{
  const secret='synthetic-test-private-key';
- for(const env of [{DATABASE_SSL_KEY:secret},{DATABASE_SSL_CA:secret},{DATABASE_SSL_CA:secret,DATABASE_SSL_CERT:secret}]){
-  assert.throws(()=>databaseConfig('postgresql://app:synthetic-password@127.0.0.1/db',env),error=>{const report=startupReport(error);assert.equal(report.code,'DATABASE_TLS_INVALID');assert.ok(!JSON.stringify(report).includes(secret));assert.ok(!JSON.stringify(report).includes('synthetic-password'));return true;});
+ for(const [env,code] of [
+  [{DATABASE_SSL_KEY:secret},'DATABASE_TLS_CA_MISSING'],
+  [{DATABASE_SSL_CA:secret},'DATABASE_TLS_CA_INVALID'],
+  [{DATABASE_SSL_CA:secret,DATABASE_SSL_CERT:secret},'DATABASE_TLS_CLIENT_INCOMPLETE']
+ ] as const){
+  assert.throws(()=>databaseConfig('postgresql://app:synthetic-password@127.0.0.1/db',env),error=>{const report=startupReport(error);assert.equal(report.code,code);assert.ok(!JSON.stringify(report).includes(secret));assert.ok(!JSON.stringify(report).includes('synthetic-password'));return true;});
  }
 });
 test('TLS PostgreSQL real: CA, certificado de cliente, consulta cifrada y rechazo de configuración insegura',{skip:!process.env.TEST_POSTGRES},async()=>{
@@ -19,6 +23,14 @@ test('TLS PostgreSQL real: CA, certificado de cliente, consulta cifrada y rechaz
   const cert=await readFile(join(database.tlsDirectory,'client/client.crt'),'utf8');
   const key=await readFile(join(database.tlsDirectory,'client/client.key'),'utf8');
   const env={DATABASE_SSL_CA:ca,DATABASE_SSL_CERT:cert,DATABASE_SSL_KEY:key};
+  const wrongKey=await readFile(join(database.tlsDirectory,'server/server.key'),'utf8');
+  for(const [values,code] of [
+   [{...env,DATABASE_SSL_CERT:'synthetic-invalid-certificate'},'DATABASE_TLS_CERT_INVALID'],
+   [{...env,DATABASE_SSL_KEY:'synthetic-invalid-key'},'DATABASE_TLS_KEY_INVALID'],
+   [{...env,DATABASE_SSL_KEY:wrongKey},'DATABASE_TLS_KEY_MISMATCH']
+  ] as const){
+   assert.throws(()=>databaseConfig(database.tlsUrl,values),error=>{const report=startupReport(error);assert.equal(report.code,code);for(const value of Object.values(values))assert.ok(!JSON.stringify(report).includes(value));return true;});
+  }
   const config=databaseConfig(database.tlsUrl,env);
   assert.equal(typeof config.ssl,'object');
   const pool=new Pool(config);
