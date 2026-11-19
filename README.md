@@ -6,6 +6,21 @@ PB-03 (Adrian / Aram). La ampliación de sitios nuevos añade análisis automát
 con LOLA local y efemérides NASA/JPL Horizons; no selecciona sitios oficiales
 ni certifica su seguridad para aterrizaje.
 
+El prototipo inicial se desarrolló en 48 horas durante el hackathon NASA Space Apps.
+
+## Fuentes de datos
+
+- **Topografía lunar.** Los modelos digitales de elevación de LOLA, el altímetro
+  de Lunar Reconnaissance Orbiter, se usan para generar las máscaras de horizonte
+  y los mapas de elevación. [Productos LOLA de NASA/GSFC](https://pgda.gsfc.nasa.gov/products/78).
+- **Efemérides.** NASA/JPL Horizons proporciona el azimut y la elevación del Sol
+  y la Tierra vistos desde cada sitio lunar. El backend usa esos ángulos y las
+  máscaras de horizonte para calcular las ventanas de co-visibilidad.
+  [API de NASA/JPL Horizons](https://ssd-api.jpl.nasa.gov/doc/horizons.html).
+- **Sitios precalculados.** Los siete sitios iniciales proceden del paquete
+  `datos/fase1` recibido por el equipo. Los productos normalizados y sus metadatos
+  de procedencia se guardan en [`data/sites`](data/sites).
+
 ## Ejecutar
 
 Node.js 22 o posterior. Desde la raíz del repositorio:
